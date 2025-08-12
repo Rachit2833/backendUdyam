@@ -1,18 +1,10 @@
 const express = require("express");
 const dotenv = require("dotenv");
-const labelRouter= require("./routes/labelRoutes")
-const imageRouter= require("./routes/imageRoutes")
-const albumRouter= require("./routes/albumRoutes")
-const statsRouter= require('./routes/statsRouter')
-const userRouter = require('./routes/usersRoutes')
-const authRouter = require('./routes/authRouter')
-// const friendRouter = require('./routes/friendRouter')
 const cors = require("cors");
-const cookieParser = require("cookie-parser");
 const http =require("http")
 const { connectDb } = require("./lib/connectDb");
-const { protect } = require("./controller/authController");
 const app = express()
+const dataRouter =require("./routes/dataRouter")
 dotenv.config({ path: "./config.env" });
 
 const PORT = process.env.PORT || 3000; // Default to port 3000 if not defined
@@ -21,7 +13,6 @@ const server = http.createServer(app);
 
 // Middleware to parse JSON
 
-app.use(cookieParser());
 app.use(
   cors({
     origin: "http://localhost:3000",
@@ -35,19 +26,7 @@ app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.get("/", (req, res) => {
   res.status(200).json({ message: "HELLO WORLD" });
 });
-
-
-app.use("/user",userRouter );
-app.use(protect)
-app.use("/", labelRouter);
-app.use("/image", imageRouter);
-app.use("/album", albumRouter);
-app.use("/stats", statsRouter);
-app.all("*",(req,res)=>{
-   res.status(404).json({
-      message:`Cannot Find the ${req.originalUrl} `
-   })
-})
+app.use("/data",dataRouter)
 
 // app.use("/friends",friendRouter);
 
