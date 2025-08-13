@@ -1,148 +1,348 @@
-# 📚 Next Gallery Refactored Backend Documentation
+# 📝 Udyam Backend Detailed Documentation
 
-Welcome to the comprehensive documentation for the **Next Gallery Refactored Backend**. This guide covers every key file in the repo, explaining its purpose, how it fits into the system, and its relationships with other modules.  
-
----
-
-## 🗂️ Index
-
-1. [Database Schemas](#1-database-schemas)  
-2. [Background Workers & Queues](#2-background-workers--queues)  
-   - [Queue Play/Pause Workaround](#queue-playpause-workaround)  
-3. [Controllers & Routes](#3-controllers--routes)  
-4. [Shared Libraries & Utilities](#4-shared-libraries--utilities)  
-5. [Configuration & Entry Points](#5-configuration--entry-points)  
+Welcome to the comprehensive documentation of the **Udyam** backend! This guide covers the core files in the repository, explains their purposes, illustrates how they interconnect, and provides interactive API reference blocks for every endpoint.
 
 ---
 
-## 1. Database Schemas
+## 📑 Index
 
-All schemas live under `Schema/` (for main server) and `Workers/*/Schemas/` (for workers). They define MongoDB collections via Mongoose.
+1. [Overview & Architecture](#-overview--architecture)  
+2. [Schema: `Schema/detailsSchema.js`](#-schema-schemadetailsschemajs)  
+3. [Controller: `controller/adharController.js`](#-controller-controlleradharcontrollerjs)  
+4. [Library: `lib/connectDb.js`](#-library-libconnectdbjs)  
+5. [Router: `routes/dataRouter.js`](#-router-routesdatarouterjs)  
+6. [Server Entry: `server.js`](#-server-entry-serverjs)  
+7. [Deployment Config: `vercel.json`](#-deployment-config-verceljson)  
+8. [Entity Relationship Diagram](#-entity-relationship-diagram)  
+9. [API Endpoints](#-api-endpoints)  
 
-| File                              | Purpose                                                                                                                           |
-|-----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| **Schema/albumSchema.js**         | Defines the **Album** model: images, metadata, blurring, ownership, with a pre-save hook to dedupe image references.             |
-| **Schema/imageSchema.js**         | Defines the **Image** model: URL, geo-location, labels, who shared it, blurred placeholder, owner reference.                     |
-| **Schema/labelSchema.js**         | Defines **Label** for face‐recognition descriptors tied to users (arrays of floats), plus blurred preview.                        |
-| **Schema/messageSchema.js**       | Defines one‐to‐one **Message**: sender, receiver, content/media, read status, deletion flags.                                     |
-| **Schema/groupSchema.js**         | Defines **Group** chat rooms: name, description, participants, admins, last message, deletion flags.                              |
-| **Schema/groupMessageSchema.js**  | Defines **GroupMessage**: messages in a group, similar to `Message` but tied to a `Group` reference.                              |
-| **Schema/relationSchema.js**      | Defines **Relation** (friendship): user-to-user status (pending/accepted/rejected), plus “autoSend” toggles per side.              |
-| **Schema/sharedLink.js**          | Defines **SharedLink**: temporary links (expire in 6 hrs) to share images/albums/groups, with automatic TTL expiry.              |
-| **Schema/sharedSchema.js**        | Mirror of `ImageSchema` for **shared** images, used when duplicating or retrieving shared data.                                   |
-| **Schema/userSchema.js**          | Defines **User**: name, email (validated), password (hashed), profile picture, SEO privacy, with password‐hash middleware.      |
+---
 
-### 🖼️ Entity Relationship Diagram
+## 🔧 Overview & Architecture
+
+The Udyam backend is a Node.js/Express application that manages Aadhaar & PAN verification via OTP workflows and persists user details in MongoDB using Mongoose.
+
+```mermaid
+flowchart LR
+    A[Client] -->|HTTP Request| B[Express Server<br/>(server.js)]
+    B --> C[/data Router/]
+    C --> D{Controller<br/>(adharController.js)}
+    D --> M[Detail Model<br/>(detailsSchema.js)]
+    B --> E[DB Connector<br/>(connectDb.js)]
+    E -->|MongoDB Connection| F[(MongoDB)]
+```
+
+---
+
+## 🎨 Schema: `Schema/detailsSchema.js`
+
+**Purpose:** Defines the **`Detail`** Mongoose model representing user records with Aadhaar & PAN.
+
+```javascript
+const mongoose = require("mongoose");
+
+const detailSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    minlength: [4, "Name should be at least 4 characters"],
+    maxlength: [48, "Name cannot exceed 48 characters"],
+  },
+  adharNumber: {
+    type: String,
+    required: true,
+    unique: true,
+    validate: {
+      validator: v => /^\d{12}$/.test(v),
+      message: props => `${props.value} is not a valid 12-digit Aadhaar number!`
+    }
+  },
+  panNumber: {
+    type: String,
+    uppercase: true,
+    unique: true,
+    validate: {
+      validator: v => /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(v),
+      message: props => `${props.value} is not a valid PAN number!`
+    }
+  }
+});
+
+module.exports = mongoose.model("Detail", detailSchema);
+```
+
+- **Fields:**  
+  | Field         | Type   | Constraints                                                    |
+  | ------------- | ------ | -------------------------------------------------------------- |
+  | `name`        | String | Required, 4–48 chars                                           |
+  | `adharNumber` | String | Required, unique, exactly 12 digits                             |
+  | `panNumber`   | String | Optional, unique, format `ABCDE1234F` (uppercased)             |
+
+---
+
+## 🛠️ Controller: `controller/adharController.js`
+
+**Purpose:** Houses all business logic for handling user data, OTP generation/verification for Aadhaar & PAN, and uniqueness checks.
+
+```javascript
+const Detail = require("../Schema/detailsSchema");
+
+// 1️⃣ Handle generic data save (/data POST)
+async function handleAdhar(req, res) { /* ... */ }
+
+// 2️⃣ Check existing Aadhaar (/data/checkAadhaarUnique POST)
+async function handleAadhaarUnique(req, res) { /* ... */ }
+
+// 3️⃣ Check existing PAN (/data/checkPanUnique POST)
+async function handlePanUnique(req, res) { /* ... */ }
+
+// Utility: Verhoeff algorithm for Aadhaar
+function isValidAadhaar(raw) { /* ... */ }
+
+// In-memory OTP stores
+const otpStore = new Map();
+const panOtpStore = new Map();
+
+// Utility: Generate 6-digit OTP
+function generateOtp() { /* ... */ }
+
+// 4️⃣ Aadhaar OTP generation (/data/generateOtp POST)
+async function generateAadhaarOtp(req, res) { /* ... */ }
+
+// 5️⃣ Aadhaar OTP verification (/data/verifyOtp POST)
+async function verifyAadhaarOtp(req, res) { /* ... */ }
+
+// Utility: Simple regex PAN check
+function isValidPAN(raw) { /* ... */ }
+
+// 6️⃣ PAN OTP generation (/data/generatePanOtp POST)
+async function generatePanOtp(req, res) { /* ... */ }
+
+// 7️⃣ PAN OTP verification (/data/verifyPanOtp POST)
+async function verifyPanOtp(req, res) { /* ... */ }
+
+module.exports = {
+  handleAdhar,
+  handleAadhaarUnique,
+  handlePanUnique,
+  generateAadhaarOtp,
+  verifyAadhaarOtp,
+  generatePanOtp,
+  verifyPanOtp,
+  isValidAadhaar,
+  isValidPAN
+};
+```
+
+- **Key Responsibilities:**
+  - **CRUD:** Create new `Detail` records.
+  - **Uniqueness Checks:** Fast `.exists()` queries.
+  - **OTP Workflows:**  
+    - Generate & cache OTP (5 min expiry)  
+    - Verify OTP, then persist data for PAN case.
+  - **Validation:**  
+    - Aadhaar: Verhoeff checksum + format  
+    - PAN: Regex pattern
+
+---
+
+## 🔌 Library: `lib/connectDb.js`
+
+**Purpose:** Establishes a connection to MongoDB using Mongoose and environment variable `DATA_BASE`.
+
+```javascript
+const mongoose = require("mongoose");
+const dotenv = require("dotenv");
+dotenv.config({ path: "./config.env" });
+
+const connectDb = async () => {
+  await mongoose.connect(process.env.DATA_BASE);
+  console.log("DB Connection Success");
+};
+
+module.exports = { connectDb };
+```
+
+- **Usage:** Invoked at server startup to bootstrap database connectivity.
+
+---
+
+## 🗺️ Router: `routes/dataRouter.js`
+
+**Purpose:** Maps HTTP routes under `/data` to controller functions.
+
+```javascript
+const express = require("express");
+const {
+  handleAdhar,
+  generateAadhaarOtp,
+  verifyAadhaarOtp,
+  generatePanOtp,
+  verifyPanOtp,
+  handlePanUnique,
+  handleAadhaarUnique
+} = require("../controller/adharController");
+
+const router = express.Router();
+
+// Base: GET & POST /data
+router
+  .route("/")
+  .post(handleAdhar)
+  .get((req, res) => res.json({ message: "You have reached the data Route" }));
+
+// Aadhaar OTP
+router.post("/generateOtp", generateAadhaarOtp);
+router.post("/verifyOtp",   verifyAadhaarOtp);
+
+// PAN OTP
+router.post("/generatePanOtp", generatePanOtp);
+router.post("/verifyPanOtp",   verifyPanOtp);
+
+module.exports = router;
+```
+
+- **Note:** `handleAadhaarUnique` & `handlePanUnique` are implemented but not yet exposed via routes.
+
+---
+
+## 🚀 Server Entry: `server.js`
+
+**Purpose:** Bootstraps the Express server, middleware, routes, and ties in the DB connector.
+
+```javascript
+const express = require("express");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const http = require("http");
+const { connectDb } = require("./lib/connectDb");
+const dataRouter   = require("./routes/dataRouter");
+
+dotenv.config({ path: "./config.env" });
+const app    = express();
+const server = http.createServer(app);
+const PORT   = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors({ origin: "http://localhost:3000", credentials: true }));
+app.use(express.json({  limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
+// Routes
+app.get("/",                   (req, res) => res.json({ message: "HELLO WORLD" }));
+app.use("/data", dataRouter);  // Data & OTP workflows
+
+// Start
+async function startServer() {
+  try {
+    await connectDb();
+    server.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error("DB Connection Error:", error);
+    process.exit(1);
+  }
+}
+
+startServer();
+module.exports = app;
+```
+
+---
+
+## ☁️ Deployment Config: `vercel.json`
+
+**Purpose:** Configures Vercel to deploy the Node.js server.
+
+```json
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "server.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "server.js"
+    }
+  ]
+}
+```
+
+- **Behaviour:** All incoming requests are routed to `server.js`, which serves the Express app.
+
+---
+
+## 📊 Entity Relationship Diagram
 
 ```mermaid
 erDiagram
-    USER ||--o{ ALBUM : owns
-    USER ||--o{ IMAGE : uploads
-    USER ||--o{ MESSAGE : sends
-    USER ||--o{ GROUP  : creates
-    GROUP ||--o{ GROUPMESSAGE : contains
-    IMAGE ||--o{ SHAREDLINK : referencedIn
-    ALBUM ||--o{ SHAREDLINK : referencedIn
-    GROUP ||--o{ SHAREDLINK : referencedIn
-    IMAGE ||--o{ LABEL : taggedWith
+    DETAIL {
+      ObjectId _id PK
+      String   name
+      String   adharNumber
+      String   panNumber
+    }
 ```
+
+- **Detail** is the sole entity; both `adharNumber` & `panNumber` are unique.
 
 ---
 
-## 2. Background Workers & Queues
+## 🚏 API Endpoints
 
-The backend uses a robust **workers and queues system** for offloading resource-intensive tasks (like image processing, face recognition, uploads, and more) to background processes, ensuring the main server remains responsive and scalable.
-
-### 🛠️ Workers Architecture
-
-Each major pipeline (upload, album, blur, face ID) is handled by a dedicated worker, orchestrated via BullMQ and Redis. Each worker has a set of responsibilities and watches a specific queue.
-
-| Worker Directory                | Consumed Queue(s)   | Main Responsibilities                                             |
-|---------------------------------|---------------------|-------------------------------------------------------------------|
-| `upload-worker`                 | UploadQueue, BlurQueue, FaceIdQueue | Handles uploads, creates blurred placeholders, triggers face-ID processing |
-| `worker-album`                  | AlbumQueue          | Processes album creation and image association                    |
-| `worker-blur`                   | BlurQueue           | Generates blurred image placeholders                              |
-| `worker-face-id`                | FaceIdQueue         | Runs face recognition, labeling, and descriptor extraction        |
-
-#### Key Worker Files
-
-- **upload-worker.js / album-worker.js / blur-worker.js / face-Id-queue.js**  
-  Entry points that spin up BullMQ workers, connecting to the relevant queue and processing jobs.
-- **lib/blur-queue.js**  
-  Centralizes creation and configuration of all BullMQ queues.
-- **lib/connectDb.js**  
-  Ensures workers connect to MongoDB for job execution.
-- **lib/redis-clinet.js**  
-  Sets up the Redis connection for BullMQ.
-
-### 🔄 Data Flow: Worker Job Orchestration
-
-```mermaid
-flowchart TD
-  A[Client uploads image] -->|POST /image/upload| B(Main Server)
-  B -- Add Job --> C(UploadQueue)
-  C -- Consumed by --> D(Upload Worker)
-  D -- Save to Supabase --> E(Supabase Storage)
-  D -- Save metadata --> F(MongoDB)
-  D -- Add Blur Job --> G(BlurQueue)
-  G -- Consumed by --> H(Blur Worker)
-  H -- Update Image Doc --> F
-  D -- Add FaceID Job --> I(FaceIdQueue)
-  I -- Consumed by --> J(FaceID Worker)
-  J -- Update Label/Descriptors --> F
-  D -- Add Album Job --> K(AlbumQueue)
-  K -- Consumed by --> L(Album Worker)
-  L -- Update Album Doc --> F
-```
-
-### 🚨 Problem: BullMQ & Upstash Redis Compatibility
-
-When using **Upstash Redis**, BullMQ queues can stall due to several limitations:
-
-- **Limited support for EVALSHA and other advanced commands**
-- **No support for stream-based polling**
-- **Redis serverless timeouts**
-
-#### ✅ Workaround: Manual Play/Pause Mechanism
-
-To stabilize queue processing and avoid stalling jobs:
-
-- **Queues are manually paused during critical DB/storage setup**
-- **Queues are only resumed after all readiness checks have passed**
-- **Prevents BullMQ from executing jobs prematurely, ensuring all dependencies (DB, storage, etc.) are fully available**
-
-This manual intervention is implemented in each worker's startup logic, ensuring robust and predictable job processing even when using serverless or limited Redis providers like Upstash.
-
----
-
-## 3. Controllers & Routes
-
-Express controllers orchestrate HTTP endpoints; routes wire controllers into paths and middleware.
-
-### 3.1 Album Endpoints
+All endpoints share:  
+**Base URL:** `http://localhost:3000`  
+**Headers:** `Content-Type: application/json`
 
 ```api
 {
-  "title": "List Albums",
-  "description": "Fetch all albums for the authenticated user, with optional filtering/sorting.",
-  "method": "GET",
-  "baseUrl": "https://api.example.com",
-  "endpoint": "/album",
+  "title": "Submit Aadhaar & PAN Details",
+  "description": "Create a new Detail record with name, adharNumber, and optionally panNumber.",
+  "method": "POST",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data",
   "headers": [
-    { "key": "Authorization", "value": "Bearer <token>", "required": true }
+    { "key": "Content-Type", "value": "application/json", "required": true }
   ],
-  "queryParams": [
-    { "key": "year", "value": "Filter by year (e.g., 2023 or 'all')", "required": false },
-    { "key": "sort", "value": "Sort criteria (e.g., '-Date')", "required": false }
+  "pathParams": [],
+  "queryParams": [],
+  "bodyType": "json",
+  "requestBody": "{\n  \"name\": \"Ravi Kumar\",\n  \"adharNumber\": \"234512341234\",\n  \"panNumber\": \"ABCDE1234F\"\n}",
+  "responses": {
+    "200": {
+      "description": "Success - Data Saved",
+      "body": "{\n  \"message\": \"Data Saved Successfully\",\n  \"detail\": { /* new Detail object */ }\n}"
+    },
+    "400": {
+      "description": "Validation/Error",
+      "body": "{ \"message\": \"Something went wrong\", \"error\": \"...\" }"
+    }
+  }
+}
+```
+
+```api
+{
+  "title": "Health Check",
+  "description": "Basic GET to verify the data route is reachable.",
+  "method": "GET",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data",
+  "headers": [
+    { "key": "Content-Type", "value": "application/json", "required": false }
   ],
+  "pathParams": [],
+  "queryParams": [],
   "bodyType": "none",
   "responses": {
     "200": {
-      "description": "Success",
-      "body": "{ \"albums\": [ /* Album objects */ ] }"
-    },
-    "401": {
-      "description": "Unauthorized"
+      "description": "Route reachable",
+      "body": "{ \"message\": \"You have reached the data Route\" }"
     }
   }
 }
@@ -150,28 +350,30 @@ Express controllers orchestrate HTTP endpoints; routes wire controllers into pat
 
 ```api
 {
-  "title": "Create New Album",
-  "description": "Upload cover image and create an album asynchronously via queue.",
+  "title": "Generate Aadhaar OTP",
+  "description": "Request an OTP for Aadhaar verification.",
   "method": "POST",
-  "baseUrl": "https://api.example.com",
-  "endpoint": "/album",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data/generateOtp",
   "headers": [
-    { "key": "Content-Type", "value": "multipart/form-data", "required": true },
-    { "key": "Authorization", "value": "Bearer <token>", "required": true }
+    { "key": "Content-Type", "value": "application/json", "required": true }
   ],
-  "bodyType": "form",
-  "formData": [
-    { "key": "images", "value": "Image file(s)", "required": false },
-    { "key": "Name", "value": "Album name", "required": true },
-    { "key": "Description", "value": "Album description", "required": false }
-  ],
+  "pathParams": [],
+  "queryParams": [],
+  "bodyType": "json",
+  "requestBody": "{\n  \"aadhaar\": \"234512341234\",\n  \"name\": \"Ravi Kumar\",\n  \"consent\": true\n}",
   "responses": {
     "200": {
-      "description": "Album queued for processing",
-      "body": "{ \"message\": \"Album queued for processing\" }"
+      "description": "OTP created",
+      "body": "{ \"message\": \"OTP generated and sent (simulated).\", \"otp\": \"123456\" }"
     },
     "400": {
-      "description": "Validation error"
+      "description": "Missing/Invalid fields or format",
+      "body": "{ \"message\": \"Missing required fields.\" }"
+    },
+    "409": {
+      "description": "Aadhaar already exists",
+      "body": "{ \"message\": \"Aadhaar already registered.\" }"
     }
   }
 }
@@ -179,70 +381,89 @@ Express controllers orchestrate HTTP endpoints; routes wire controllers into pat
 
 ```api
 {
-  "title": "Get Album by ID",
-  "description": "Retrieve a specific album (with metadata) by its ID.",
-  "method": "GET",
-  "endpoint": "/album/:id",
-  "pathParams": [
-    { "key": "id", "value": "Album ID", "required": true }
+  "title": "Verify Aadhaar OTP",
+  "description": "Validate an OTP for Aadhaar and confirm verification.",
+  "method": "POST",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data/verifyOtp",
+  "headers": [
+    { "key": "Content-Type", "value": "application/json", "required": true }
   ],
-  "headers": [ { "key": "Authorization", "value": "Bearer <token>", "required": true } ],
+  "pathParams": [],
+  "queryParams": [],
+  "bodyType": "json",
+  "requestBody": "{\n  \"aadhaar\": \"234512341234\",\n  \"otp\": \"123456\"\n}",
   "responses": {
-    "200": { "description": "Success", "body": "{ \"data\": { /* Album object */ } }" },
-    "404": { "description": "Album not found or unauthorized" }
+    "200": {
+      "description": "OTP valid",
+      "body": "{ \"message\": \"Aadhaar verified successfully.\", \"otp\": \"123456\" }"
+    },
+    "400": {
+      "description": "Missing, expired, or invalid OTP",
+      "body": "{ \"message\": \"Invalid OTP.\" }"
+    }
   }
 }
 ```
 
 ```api
 {
-  "title": "Add Images to Album",
-  "description": "Append new image references to an existing album.",
-  "method": "PATCH",
-  "endpoint": "/album/:id",
-  "pathParams": [ { "key": "id", "value": "Album ID", "required": true } ],
-  "headers": [ { "key": "Authorization", "value": "Bearer <token>", "required": true } ],
+  "title": "Generate PAN OTP",
+  "description": "Request an OTP for PAN verification.",
+  "method": "POST",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data/generatePanOtp",
+  "headers": [
+    { "key": "Content-Type", "value": "application/json", "required": true }
+  ],
+  "pathParams": [],
+  "queryParams": [],
   "bodyType": "json",
-  "requestBody": "{ \"photoArray\": [ { \"id\": \"<ImageId>\" }, ... ] }",
+  "requestBody": "{\n  \"pan\": \"ABCDE1234F\",\n  \"name\": \"Ravi Kumar\",\n  \"email\": \"ravi@example.com\"\n}",
   "responses": {
     "200": {
-      "description": "Images added",
-      "body": "{ \"addedImages\": [...], \"duplicateImages\": [...], \"data\": { /* updated album */ } }"
+      "description": "OTP created",
+      "body": "{ \"message\": \"OTP generated and sent (simulated).\", \"otp\": \"654321\" }"
     },
-    "403": { "description": "Unauthorized or album not found" }
+    "400": {
+      "description": "Missing or invalid fields",
+      "body": "{ \"message\": \"Invalid PAN number.\" }"
+    },
+    "409": {
+      "description": "PAN already exists",
+      "body": "{ \"message\": \"PAN already registered.\" }"
+    }
   }
 }
 ```
 
-*(Additional endpoints: DELETE `/album/:id`, GET `/album/images/:id`, POST `/album/share`, etc.)*
-
-> **Route file**: `routes/albumRoutes.js` wires these to `controller/albumController.js`.
-
----
-
-## 4. Shared Libraries & Utilities
-
-Re‐usable modules under `lib/` and root:
-
-- **lib/blur-queue.js**: Single source of truth for all BullMQ queues.  
-- **lib/connectDb.js**: Central DB connector.  
-- **lib/redis-clinet.js**: Redis connection wrapper.  
-- **lib/util.mjs**: `getImageBlurred(src)` using [Plaiceholder] for LQIP base64 placeholders.  
-- **upload.js** / **Workers/*/upload.js**: Supabase upload helper.  
-- **supabase.js** / **Workers/*/supabase.js**: Instantiates Supabase client.  
-
----
-
-## 5. Configuration & Entry Points
-
-| File                    | Purpose                                                                                       |
-|-------------------------|-----------------------------------------------------------------------------------------------|
-| **ecosystem.config.js** | PM2/Ecosystem to run multiple apps: `server`, `blur-worker`, `face-id-queue`, etc.           |
-| **package.json**        | Root dependencies (Express, Mongoose, BullMQ, etc.) and scripts.                              |
-| **server.js**           | Starts Express HTTP server, applies middleware (CORS, JSON, cookies), mounts routers, protects routes, and connects DB. |
-| **vercel.json**         | Vercel deployment config: single `server.js` entrypoint.                                      |
-| **upload.js**           | Duplicate of worker‐upload helper at root for server use.                                     |
+```api
+{
+  "title": "Verify PAN OTP",
+  "description": "Validate an OTP for PAN and create the Detail record upon success.",
+  "method": "POST",
+  "baseUrl": "http://localhost:3000",
+  "endpoint": "/data/verifyPanOtp",
+  "headers": [
+    { "key": "Content-Type", "value": "application/json", "required": true }
+  ],
+  "pathParams": [],
+  "queryParams": [],
+  "bodyType": "json",
+  "requestBody": "{\n  \"pan\": \"ABCDE1234F\",\n  \"otp\": \"654321\",\n  \"aadhaar\": \"234512341234\",\n  \"name\": \"Ravi Kumar\"\n}",
+  "responses": {
+    "200": {
+      "description": "Verified & stored",
+      "body": "{ \"message\": \"PAN verified successfully.\", \"data\": { /* new Detail object */ } }"
+    },
+    "400": {
+      "description": "Missing, expired, or invalid OTP",
+      "body": "{ \"message\": \"OTP expired. Please request a new one.\" }"
+    }
+  }
+}
+```
 
 ---
 
-🎉 **Congratulations!** You’ve reached the end of the documentation. This guide should empower you to navigate the codebase, understand data flows, and extend functionality seamlessly.(Documentation Generated By AI, may have some undocumented concerns)
+> ⭐ **Enjoy exploring the Udyam backend!** For any further clarifications, dive into the individual files or reach out to the maintainers.
